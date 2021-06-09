@@ -1,0 +1,35 @@
+# Docker Compose Keycloak Postgres ( Docker compose for Keycloak with Postgres Database).
+
+version: '3.1'
+
+
+volumes:
+  postgres_data:
+      driver: local
+
+
+services:
+  postgres:
+      image: postgres
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+      environment:
+        POSTGRES_DB: keycloakdatabase
+        POSTGRES_USER: mukeshkeycloak
+        POSTGRES_PASSWORD: mukeshkeycloak12345
+  keycloak:
+      image: jboss/keycloak:10.0.0
+      environment:
+        DB_VENDOR: POSTGRES
+        DB_ADDR: database-2.ce8jgqqgaafk.us-east-1.rds.amazonaws.com
+        DB_DATABASE: keycloakdatabase
+        DB_USER: mukeshkeycloak
+        DB_PASSWORD: mukeshkeycloak12345
+        KEYCLOAK_USER: admin
+        KEYCLOAK_PASSWORD: admin
+        
+      ports:
+        - 8080:8080
+      depends_on:
+        - postgres
+  
