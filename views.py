@@ -1,14 +1,82 @@
-from flask import Flask ,request , jsonify , make_response
+from flask import Flask ,request , jsonify , make_response , render_template
+from flask.globals import g 
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta , date
 from functools import wraps
+from flask_oidc import OpenIDConnect
+from werkzeug.utils import redirect
 from models import *
 from config import *
 import jwt
+import requests
+import json
 
 
-app=Flask(__name__)
+app=Flask(__name__,template_folder="./templates")
 
+app.config.update({
+    'SECRET_KEY': 'SomethingNotEntirelySecret',
+    'TESTING': True,
+    'DEBUG': True,
+    'OIDC_CLIENT_SECRETS': './client_secrets.json',
+    'OIDC_ID_TOKEN_COOKIE_SECURE': False,
+    'OIDC_REQUIRE_VERIFIED_EMAIL': False,
+    'OIDC_USER_INFO_ENABLED': True,
+    'OIDC_OPENID_REALM': 'nwclient',
+    'OIDC_SCOPES': ['openid', 'email', 'profile'],
+    'OIDC_INTROSPECTION_AUTH_METHOD': 'client_secret_post',
+    'OIDC_TOKEN_TYPE_HINT': 'access_token'
+})
+
+oidc = OpenIDConnect(app)
+
+
+@app.route('/')
+def LandingPage():
+    if oidc.user_loggedin:
+        return render_template("landing.html")
+    else:
+        return render_template("login.html")
+
+
+@app.route('/private')
+@oidc.require_login
+def KeycloakLogin():
+    """Example for protected endpoint that extracts private information from the OpenID Connect id_token.
+       Uses the accompanied access_token to access a backend service.
+    """
+    info = oidc.user_getinfo(['preferred_username', 'email', 'sub'])
+    username = info.get('preferred_username')
+    email = info.get('email')
+    user_id = info.get('sub')
+
+    if user_id in oidc.credentials_store:
+        try:
+            from oauth2client.client import OAuth2Credentials
+            access_token = OAuth2Credentials.from_json(oidc.credentials_store[user_id]).access_token
+            print('access_token=<%s>' % access_token)
+            headers = {'Authorization': 'Bearer %s' % (access_token)}
+            # YOLO
+            greeting = requests.get('http://localhost:8080/*', headers=headers).text
+        except:
+            print("Could not access greeting-service")
+            greeting = "Hello %s" % username
+        info = oidc.user_getinfo(['preferred_username', 'email', 'sub'])
+    username=info.get('preferred_username').title()
+    return render_template("landing.html",username=username)
+
+@app.route('/api', methods=['POST'])
+@oidc.accept_token(require_token=True, scopes_required=['openid'])
+def hello_api():
+    """OAuth 2.0 protected API endpoint accessible via AccessToken"""
+    return json.dumps({'hello': 'Welcome %s' % g.oidc_token_info['sub']})
+
+@app.route('/logout')
+def logout():
+    """Performs local logout by removing the session cookie."""
+
+    oidc.logout()
+    return render_template('login.html')
 
 #This script check token related stuffs and used as a decorator for required token validation
 
@@ -81,8 +149,7 @@ def UserCreate():
 #---------------------------User view related scripts starts --------------------------------------------
 
 @app.route("/user/<int:id>/view", methods=['GET'])
-@token_required
-def UserView(current_user,id):
+def UserView(id):
     user_record = Users.query.get_or_404(id)
     if request.method == 'GET':
         payload = [
@@ -101,8 +168,7 @@ def UserView(current_user,id):
 #---------------------------User update related scripts starts -------------------------------------------
 
 @app.route("/user/<int:id>/update", methods=['PUT'])
-@token_required
-def UserUpdate(current_user,id):
+def UserUpdate(id):
     user_record = Users.query.get_or_404(id)
     if request.method == 'PUT':
         if request.is_json:
@@ -120,8 +186,7 @@ def UserUpdate(current_user,id):
 # User delete related scripts -----------------------------------------------
 
 @app.route("/user/<int:id>/delete", methods=['DELETE'])
-@token_required
-def UsereDelete(current_user,id):
+def UsereDelete(id):
     user_record = Users.query.get_or_404(id)
     if request.method == 'DELETE':
         db.session.delete(user_record)
@@ -131,134 +196,150 @@ def UsereDelete(current_user,id):
 
 #insert new employee data related script
 @app.route("/employee/create", methods=['POST'])
-@token_required
-def EmployeeCreation(current_user):
-    if request.method == 'POST':
-        if request.is_json:
-            data = request.get_json()
-            new_emp_record = Employee(
-                    first_name = data['first_name'],
-                    last_name = data['last_name'],
-                    email_id = data['email_id'],
-                    mobile_no = data['mobile_no']
-                    )
-            db.session.add(new_emp_record)
-            db.session.commit()
-            return {"message": f"New Employee {new_emp_record.first_name+' '+new_emp_record.last_name} has been created successfully"}
-        else:
-            return {"error": "The request payload is not correct in JSON format"}
+def EmployeeCreation():
+    if oidc.user_loggedin:
+        if request.method == 'POST':
+            if request.is_json:
+                data = request.get_json()
+                new_emp_record = Employee(
+                        first_name = data['first_name'],
+                        last_name = data['last_name'],
+                        email_id = data['email_id'],
+                        mobile_no = data['mobile_no']
+                        )
+                db.session.add(new_emp_record)
+                db.session.commit()
+                return {"message": f"New Employee {new_emp_record.first_name+' '+new_emp_record.last_name} has been created successfully"}
+            else:
+                return {"error": "The request payload is not correct in JSON format"}
+    else:
+        return render_template("login.html")
 
 #display specific employee data related script
 @app.route("/employee/<int:eid>/view", methods=['GET'])
-@token_required
-def EmployeeView(current_user,eid):
-    emp_record = Employee.query.get_or_404(eid)
-    if request.method == 'GET':
-        payload = [
-                {
-                "eid": emp_record.eid,
-                "first_name":emp_record.first_name,
-                "last_name":emp_record.last_name,
-                "email_id":emp_record.email_id,
-                "mobile_no":emp_record.mobile_no,
-                "date_created":emp_record.date_created,
-                "date_modified":emp_record.date_modified,
-                }]
-        return {"message":"success","status code":200 , "payload": payload}
+def EmployeeView(eid):
+    if oidc.user_loggedin:
+        emp_record = Employee.query.get_or_404(eid)
+        if request.method == 'GET':
+            payload = [
+                    {
+                    "eid": emp_record.eid,
+                    "first_name":emp_record.first_name,
+                    "last_name":emp_record.last_name,
+                    "email_id":emp_record.email_id,
+                    "mobile_no":emp_record.mobile_no,
+                    "date_created":emp_record.date_created,
+                    "date_modified":emp_record.date_modified,
+                    }]
+            return {"message":"success","status code":200 , "payload": payload}
+    else:
+        return render_template("login.html")
 
 
 #update specific employee data related script
 @app.route("/employee/<int:eid>/update", methods=['PUT'])
-@token_required
-def EmployeeUpdate(current_user,eid):
-    emp_record = Employee.query.get_or_404(eid)
-    if request.method == 'PUT':
-        if request.is_json:
-            data = request.get_json()
-            emp_record.first_name = emp_record.first_name if data.get("first_name")==None else data.get("first_name")
-            emp_record.last_name = emp_record.last_name if data.get("last_name")==None else data.get("last_name")
-            emp_record.email_id = emp_record.email_id if data.get("email_id")==None else data.get("email_id")
-            emp_record.mobile_no = emp_record.mobile_no if data.get("mobile_no")==None else data.get("mobile_no")
-            db.session.commit()
-            return {"message": f"Employee id {emp_record.eid} record has been updated successfully","status":200}
-        else:
-            return {"error": "The request payload is not correct in JSON format"}
+def EmployeeUpdate(eid):
+    if oidc.user_loggedin:
+        emp_record = Employee.query.get_or_404(eid)
+        if request.method == 'PUT':
+            if request.is_json:
+                data = request.get_json()
+                emp_record.first_name = emp_record.first_name if data.get("first_name")==None else data.get("first_name")
+                emp_record.last_name = emp_record.last_name if data.get("last_name")==None else data.get("last_name")
+                emp_record.email_id = emp_record.email_id if data.get("email_id")==None else data.get("email_id")
+                emp_record.mobile_no = emp_record.mobile_no if data.get("mobile_no")==None else data.get("mobile_no")
+                db.session.commit()
+                return {"message": f"Employee id {emp_record.eid} record has been updated successfully","status":200}
+            else:
+                return {"error": "The request payload is not correct in JSON format"}
+    else:
+        return render_template("login.html")
 
 #delete specific employee data related script
 @app.route("/employee/<int:eid>/delete", methods=['DELETE'])
-@token_required
-def EmployeeDelete(current_user,eid):
-    emp_record = Employee.query.get_or_404(eid)
-    if request.method == 'DELETE':
-        db.session.delete(emp_record)
-        db.session.commit()
-        return {"message": f"record has been deleted successfully","status":200}
+def EmployeeDelete(eid):
+    if oidc.user_loggedin:
+        emp_record = Employee.query.get_or_404(eid)
+        if request.method == 'DELETE':
+            db.session.delete(emp_record)
+            db.session.commit()
+            return {"message": f"record has been deleted successfully","status":200}
 
+    else:
+        return render_template("login.html")
 
 # -------------------------
 #insert new company data related script
 @app.route("/company/create", methods=['POST'])
-@token_required
-def CompanyCreation(current_user):
-    if request.method == 'POST':
-        if request.is_json:
-            data = request.get_json()
-            new_cmp_record = Company(
-                eid = data['eid'],
-                company_name = data['company_name'],
-                branch = data['branch'],
-                department = data['department'],
-                ceo = data['ceo']
-                    )
-            db.session.add(new_cmp_record)
-            db.session.commit()
-            return {"message": f"New Company {new_cmp_record.company_name} has been created successfully"}
-        else:
-            return {"error": "The request payload is not correct in JSON format"}
+def CompanyCreation():
+    if oidc.user_loggedin:
+        if request.method == 'POST':
+            if request.is_json:
+                data = request.get_json()
+                new_cmp_record = Company(
+                    eid = data['eid'],
+                    company_name = data['company_name'],
+                    branch = data['branch'],
+                    department = data['department'],
+                    ceo = data['ceo']
+                        )
+                db.session.add(new_cmp_record)
+                db.session.commit()
+                return {"message": f"New Company {new_cmp_record.company_name} has been created successfully"}
+            else:
+                return {"error": "The request payload is not correct in JSON format"}
+    else:
+        return render_template("login.html")
 
 #display specific company data related script
 @app.route("/company/<int:eid>/view", methods=['GET'])
-@token_required
-def CompanyView(current_user,eid):
-    cmp_record = Company.query.get_or_404(eid)
-    if request.method == 'GET':
-        payload = [
-                {
-                "cid": cmp_record.cid,
-                "eid": cmp_record.eid,
-                "company_name":cmp_record.company_name,
-                "branch":cmp_record.branch,
-                "department":cmp_record.department,
-                "ceo":cmp_record.ceo,
-                "date_created":cmp_record.date_created,
-                "date_modified":cmp_record.date_modified,
-                }]
-        return {"message":"success","status code":200 , "payload": payload}
+def CompanyView(eid):
+    if oidc.user_loggedin:
+        cmp_record = Company.query.get_or_404(eid)
+        if request.method == 'GET':
+            payload = [
+                    {
+                    "cid": cmp_record.cid,
+                    "eid": cmp_record.eid,
+                    "company_name":cmp_record.company_name,
+                    "branch":cmp_record.branch,
+                    "department":cmp_record.department,
+                    "ceo":cmp_record.ceo,
+                    "date_created":cmp_record.date_created,
+                    "date_modified":cmp_record.date_modified,
+                    }]
+            return {"message":"success","status code":200 , "payload": payload}
+    else:
+        return render_template("login.html")
 
 #update specific company data related script
 @app.route("/company/<int:eid>/update", methods=['PUT'])
-@token_required
-def CompanyUpdate(current_user,eid):
-    cmp_record = Company.query.get_or_404(eid)
-    if request.method == 'PUT':
-        if request.is_json:
-            data = request.get_json()
-            cmp_record.eid = cmp_record.eid if data.get("eid")==None else data.get("eid")
-            cmp_record.company_name = cmp_record.company_name if data.get("company_name")==None else data.get("company_name")
-            cmp_record.branch = cmp_record.branch if data.get("branch")==None else data.get("branch")
-            cmp_record.department = cmp_record.department if data.get("department")==None else data.get("department")
-            cmp_record.ceo = cmp_record.ceo if data.get("ceo")==None else data.get("ceo")
-            db.session.commit()
-            return {"message": f"Employee id {cmp_record.cid} record has been updated successfully","status":200}
-        else:
-            return {"error": "The request payload is not correct in JSON format"}
+def CompanyUpdate(eid):
+    if oidc.user_loggedin:
+        cmp_record = Company.query.get_or_404(eid)
+        if request.method == 'PUT':
+            if request.is_json:
+                data = request.get_json()
+                cmp_record.eid = cmp_record.eid if data.get("eid")==None else data.get("eid")
+                cmp_record.company_name = cmp_record.company_name if data.get("company_name")==None else data.get("company_name")
+                cmp_record.branch = cmp_record.branch if data.get("branch")==None else data.get("branch")
+                cmp_record.department = cmp_record.department if data.get("department")==None else data.get("department")
+                cmp_record.ceo = cmp_record.ceo if data.get("ceo")==None else data.get("ceo")
+                db.session.commit()
+                return {"message": f"Employee id {cmp_record.cid} record has been updated successfully","status":200}
+            else:
+                return {"error": "The request payload is not correct in JSON format"}
+    else:
+        return render_template("login.html")
 
 #delete specific company data related script
 @app.route("/company/<int:cid>/delete", methods=['DELETE'])
-@token_required
-def CompanyDelete(current_user,cid):
-    cmp_record = Company.query.get_or_404(cid)
-    if request.method == 'DELETE':
-        db.session.delete(cmp_record)
-        db.session.commit()
-        return {"message": f"record has been deleted successfully","status":200}
+def CompanyDelete(cid):
+    if oidc.user_loggedin:
+        cmp_record = Company.query.get_or_404(cid)
+        if request.method == 'DELETE':
+            db.session.delete(cmp_record)
+            db.session.commit()
+            return {"message": f"record has been deleted successfully","status":200}
+    else:
+        return render_template("login.html")
