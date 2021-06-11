@@ -36,7 +36,7 @@ def LandingPage():
     if oidc.user_loggedin:
         return render_template("landing.html")
     else:
-        return render_template("login.html")
+        return redirect('/private')
 
 
 @app.route('/private')
@@ -76,7 +76,7 @@ def logout():
     """Performs local logout by removing the session cookie."""
 
     oidc.logout()
-    return render_template('login.html')
+    return render_template('logout.html')
 
 #This script check token related stuffs and used as a decorator for required token validation
 
@@ -213,7 +213,7 @@ def EmployeeCreation():
             else:
                 return {"error": "The request payload is not correct in JSON format"}
     else:
-        return render_template("login.html")
+        return redirect('/private')
 
 #display specific employee data related script
 @app.route("/employee/<int:eid>/view", methods=['GET'])
@@ -233,7 +233,7 @@ def EmployeeView(eid):
                     }]
             return {"message":"success","status code":200 , "payload": payload}
     else:
-        return render_template("login.html")
+        return redirect('/private')
 
 
 #update specific employee data related script
@@ -253,7 +253,7 @@ def EmployeeUpdate(eid):
             else:
                 return {"error": "The request payload is not correct in JSON format"}
     else:
-        return render_template("login.html")
+        return redirect('/private')
 
 #delete specific employee data related script
 @app.route("/employee/<int:eid>/delete", methods=['DELETE'])
@@ -266,7 +266,7 @@ def EmployeeDelete(eid):
             return {"message": f"record has been deleted successfully","status":200}
 
     else:
-        return render_template("login.html")
+        return redirect('/private')
 
 # -------------------------
 #insert new company data related script
@@ -289,7 +289,7 @@ def CompanyCreation():
             else:
                 return {"error": "The request payload is not correct in JSON format"}
     else:
-        return render_template("login.html")
+        return redirect('/private')
 
 #display specific company data related script
 @app.route("/company/<int:eid>/view", methods=['GET'])
@@ -310,7 +310,7 @@ def CompanyView(eid):
                     }]
             return {"message":"success","status code":200 , "payload": payload}
     else:
-        return render_template("login.html")
+        return redirect('/private')
 
 #update specific company data related script
 @app.route("/company/<int:eid>/update", methods=['PUT'])
@@ -330,7 +330,7 @@ def CompanyUpdate(eid):
             else:
                 return {"error": "The request payload is not correct in JSON format"}
     else:
-        return render_template("login.html")
+        return redirect('/private')
 
 #delete specific company data related script
 @app.route("/company/<int:cid>/delete", methods=['DELETE'])
@@ -342,4 +342,4 @@ def CompanyDelete(cid):
             db.session.commit()
             return {"message": f"record has been deleted successfully","status":200}
     else:
-        return render_template("login.html")
+        return redirect('/private')
